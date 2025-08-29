@@ -18,7 +18,7 @@ BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 SHEET_ID = os.getenv("SHEET_ID")
 SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CRED_JSON")
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(SERVICE_ACCOUNT_JSON), scope)
 client = gspread.authorize(creds)
 
@@ -36,7 +36,7 @@ async def telegram_webhook(req: Request):
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
 
-        # 1️⃣ Clear Telegram sheet & append message line by line
+        # 1️⃣ Clear Telegram sheet & append user message line by line
         try:
             telegram_sheet.clear()
             for line in text.split("\n"):
@@ -45,14 +45,15 @@ async def telegram_webhook(req: Request):
         except Exception as e:
             print("Error updating Telegram sheet:", e)
 
-        # 2️⃣ Generate Site Down Hourly PNG
+        # 2️⃣ Generate Site Down Hourly PNG safely
+        buf = None
         try:
             records = site_down_sheet.get_all_records()
             df = pd.DataFrame(records)
             if df.empty:
                 df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
 
-            # Limit rows to avoid timeout
+            # Limit rows to avoid serverless timeout
             max_rows = 30
             if len(df) > max_rows:
                 df = df.head(max_rows)
@@ -66,11 +67,9 @@ async def telegram_webhook(req: Request):
             plt.close(fig)
         except Exception as e:
             print("Error generating PNG:", e)
-            buf = None
 
-        # 3️⃣ Send messages to Telegram
+        # 3️⃣ Send PNG and text confirmation
         async with httpx.AsyncClient(timeout=15) as client_req:
-            # Send PNG if generated
             if buf:
                 try:
                     resp = await client_req.post(
@@ -82,7 +81,7 @@ async def telegram_webhook(req: Request):
                 except Exception as e:
                     print("Error sending PNG:", e)
 
-            # Send confirmation message
+            # Send text confirmation
             try:
                 resp = await client_req.post(
                     f"{BASE_URL}/sendMessage",
@@ -95,5 +94,5 @@ async def telegram_webhook(req: Request):
     except Exception as e:
         print("Error in webhook:", e)
 
-    # Always return 200 OK to Telegram to prevent retries
+    # Always return 200 OK to Telegram
     return {"ok": True}
