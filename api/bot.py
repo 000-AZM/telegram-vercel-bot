@@ -6,7 +6,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import json
 from datetime import datetime
 
-app = FastAPI()
+app = FastAPI() 
 
 # Telegram bot
 TOKEN = os.getenv("TELEGRAM_TOKEN")
