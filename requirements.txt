@@ -1,2 +1,4 @@
 fastapi
 httpx
+gspread
+oauth2client
