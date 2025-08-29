@@ -35,11 +35,13 @@ async def webhook(req: Request):
     for line in text.split("\n"):
         telegram_sheet.append_row([line])
 
-    # Send confirmation
-    async with httpx.AsyncClient() as client_req:
-        await client_req.post(
+    # Send confirmation to Telegram
+    async with httpx.AsyncClient(timeout=15) as client_req:
+        resp = await client_req.post(
             f"{BASE_URL}/sendMessage",
             json={"chat_id": chat_id, "text": "✅ Message logged successfully!"}
         )
+        # Log Telegram response for debugging
+        print("Telegram sendMessage response:", resp.status_code, resp.text)
 
     return {"ok": True}
