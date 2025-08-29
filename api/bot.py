@@ -4,30 +4,23 @@ import httpx
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-import pandas as pd
-import matplotlib.pyplot as plt
-from io import BytesIO
 
 app = FastAPI()
 
-# Telegram bot
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# Google Sheets setup
 SHEET_ID = os.getenv("SHEET_ID")
 SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CRED_JSON")
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(SERVICE_ACCOUNT_JSON), scope)
 client = gspread.authorize(creds)
 
-# Sheets
 telegram_sheet = client.open_by_key(SHEET_ID).worksheet("Telegram")
-site_down_sheet = client.open_by_key(SHEET_ID).worksheet("Site Down Hourly")
 
 @app.post("/api/bot")
-async def telegram_webhook(req: Request):
+async def webhook(req: Request):
     data = await req.json()
     if "message" not in data:
         return {"ok": True}
@@ -35,44 +28,18 @@ async def telegram_webhook(req: Request):
     chat_id = data["message"]["chat"]["id"]
     text = data["message"].get("text", "")
 
-    # 1️⃣ Clear Telegram sheet & log user message line by line
+    # Clear sheet
     telegram_sheet.clear()
+
+    # Append user message line by line
     for line in text.split("\n"):
-        row = [part.strip() for part in line.split("│")]
-        telegram_sheet.append_row(row)
+        telegram_sheet.append_row([line])
 
-    # 2️⃣ Read Site Down Hourly sheet
-    records = site_down_sheet.get_all_records()
-    df = pd.DataFrame(records)
-    if df.empty:
-        df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
-
-    # Limit rows to avoid serverless timeout
-    max_rows = 30
-    if len(df) > max_rows:
-        df = df.head(max_rows)
-
-    # 3️⃣ Generate lightweight PNG
-    fig, ax = plt.subplots(figsize=(8, max(len(df)*0.4, 2)))
-    ax.axis('off')
-    ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-    buf.seek(0)
-    plt.close(fig)
-
-    # 4️⃣ Send PNG & confirmation using a single async client
-    async with httpx.AsyncClient(timeout=15) as client_req:
-        # Send the Site Down Hourly sheet as PNG
-        await client_req.post(
-            f"{BASE_URL}/sendPhoto",
-            files={"photo": ("site_down.png", buf, "image/png")},
-            data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
-        )
-        # Send confirmation message
+    # Send confirmation
+    async with httpx.AsyncClient() as client_req:
         await client_req.post(
             f"{BASE_URL}/sendMessage",
-            json={"chat_id": chat_id, "text": "✅ Your message has been logged in Telegram sheet!"}
+            json={"chat_id": chat_id, "text": "✅ Message logged successfully!"}
         )
 
     return {"ok": True}
