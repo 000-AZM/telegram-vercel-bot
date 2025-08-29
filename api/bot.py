@@ -5,8 +5,15 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # Use serverless-safe backend
 import matplotlib.pyplot as plt
 from io import BytesIO
+import tempfile
+
+# Set matplotlib cache to /tmp for Vercel
+tmpdir = tempfile.mkdtemp()
+matplotlib.rcParams['cache.directory'] = tmpdir
 
 app = FastAPI()
 
@@ -66,7 +73,7 @@ async def telegram_webhook(req: Request):
             buf.seek(0)
             plt.close(fig)
         except Exception as e:
-            print("Error generating PNG:", e)
+            print("PNG generation error:", e)
 
         # 3️⃣ Send PNG and text confirmation
         async with httpx.AsyncClient(timeout=15) as client_req:
@@ -81,7 +88,7 @@ async def telegram_webhook(req: Request):
                 except Exception as e:
                     print("Error sending PNG:", e)
 
-            # Send text confirmation
+            # Always send text confirmation
             try:
                 resp = await client_req.post(
                     f"{BASE_URL}/sendMessage",
