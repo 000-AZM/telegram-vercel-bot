@@ -47,7 +47,8 @@ async def telegram_webhook(req: Request):
             df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
 
         # 3️⃣ Generate PNG table
-        fig, ax = plt.subplots(figsize=(8, max(len(df)*0.5, 2)))
+     fig, ax = plt.subplots(figsize=(8, max(len(df)*0.3, 2)))
+
         ax.axis('off')
         ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
         buf = BytesIO()
