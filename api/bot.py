@@ -63,11 +63,13 @@ async def telegram_webhook(req: Request):
 
     # 4️⃣ Send PNG & confirmation using a single async client
     async with httpx.AsyncClient(timeout=15) as client_req:
+        # Send the Site Down Hourly sheet as PNG
         await client_req.post(
             f"{BASE_URL}/sendPhoto",
             files={"photo": ("site_down.png", buf, "image/png")},
             data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
         )
+        # Send confirmation message
         await client_req.post(
             f"{BASE_URL}/sendMessage",
             json={"chat_id": chat_id, "text": "✅ Your message has been logged in Telegram sheet!"}
