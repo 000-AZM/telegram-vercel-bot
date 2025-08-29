@@ -29,45 +29,46 @@ site_down_sheet = client.open_by_key(SHEET_ID).worksheet("Site Down Hourly")
 @app.post("/api/bot")
 async def telegram_webhook(req: Request):
     data = await req.json()
+    if "message" not in data:
+        return {"ok": True}
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
+    chat_id = data["message"]["chat"]["id"]
+    text = data["message"].get("text", "")
 
-        # 1️⃣ Clear Telegram sheet & paste user message line by line
-        telegram_sheet.clear()
-        for line in text.split("\n"):
-            telegram_sheet.append_row([line])
+    # Clear Telegram sheet & paste user message line by line
+    telegram_sheet.clear()
+    for line in text.split("\n"):
+        telegram_sheet.append_row([line])
 
-        # 2️⃣ Read Site Down Hourly sheet
-        records = site_down_sheet.get_all_records()
-        df = pd.DataFrame(records)
+    # Read Site Down Hourly sheet
+    records = site_down_sheet.get_all_records()
+    df = pd.DataFrame(records)
 
-        # If sheet is empty, create placeholder
-        if df.empty:
-            df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
+    if df.empty:
+        df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
 
-        # 3️⃣ Generate PNG table
-        fig, ax = plt.subplots(figsize=(8, len(df)*0.5+1))
-        ax.axis('off')
-        ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
-        buf = BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight')
-        buf.seek(0)
+    # Generate PNG table (optimized size)
+    fig, ax = plt.subplots(figsize=(8, max(len(df)*0.3, 2)))
+    ax.axis('off')
+    ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+    buf.seek(0)
+    plt.close(fig)  # free memory
 
-        # 4️⃣ Send PNG to Telegram
-        async with httpx.AsyncClient() as client_req:
-            await client_req.post(
-                f"{BASE_URL}/sendPhoto",
-                files={"photo": ("site_down.png", buf, "image/png")},
-                data={"chat_id": chat_id, "caption": "Updated Site Down Hourly"}
-            )
+    # Use a single async client for both requests
+    async with httpx.AsyncClient(timeout=15) as client_req:
+        # Send PNG to user
+        await client_req.post(
+            f"{BASE_URL}/sendPhoto",
+            files={"photo": ("site_down.png", buf, "image/png")},
+            data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
+        )
 
-        # 5️⃣ Reply confirmation
-        async with httpx.AsyncClient() as client_req:
-            await client_req.post(
-                f"{BASE_URL}/sendMessage",
-                json={"chat_id": chat_id, "text": "✅ Your message has been logged!"}
-            )
+        # Send confirmation message
+        await client_req.post(
+            f"{BASE_URL}/sendMessage",
+            json={"chat_id": chat_id, "text": "✅ Your message has been logged!"}
+        )
 
     return {"ok": True}
