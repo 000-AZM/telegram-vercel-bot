@@ -4,9 +4,6 @@ import httpx
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
-import pandas as pd
-import matplotlib.pyplot as plt
-from io import BytesIO
 
 app = FastAPI()
 
@@ -21,57 +18,29 @@ SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CRED_JSON")
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(SERVICE_ACCOUNT_JSON), scope)
 client = gspread.authorize(creds)
-
-# Sheets
-telegram_sheet = client.open_by_key(SHEET_ID).worksheet("Telegram")
-site_down_sheet = client.open_by_key(SHEET_ID).worksheet("Site Down Hourly")
+sheet = client.open_by_key(SHEET_ID).worksheet("Telegram")  # Your sheet name
 
 @app.post("/api/bot")
 async def telegram_webhook(req: Request):
     data = await req.json()
-    if "message" not in data:
-        return {"ok": True}
 
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "")
+    if "message" in data:
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
 
-    # 1️⃣ Clear Telegram sheet
-    telegram_sheet.clear()
+        # Reply to user
+        reply = "✅ Message logged in Google Sheet."
+        async with httpx.AsyncClient() as client_req:
+            await client_req.post(
+                f"{BASE_URL}/sendMessage",
+                json={"chat_id": chat_id, "text": reply}
+            )
 
-    # 2️⃣ Paste user message as normal (preserve columns)
-    for line in text.split("\n"):
-        # Split by some delimiter if you want columns; here we use "│" as in your example
-        row = [part.strip() for part in line.split("│")]
-        telegram_sheet.append_row(row)
+        # Clear the sheet
+        sheet.clear()
 
-    # 3️⃣ Read Site Down Hourly sheet
-    records = site_down_sheet.get_all_records()
-    df = pd.DataFrame(records)
-
-    if df.empty:
-        df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
-
-    # 4️⃣ Generate PNG table
-    fig, ax = plt.subplots(figsize=(8, max(len(df)*0.5, 2)))
-    ax.axis('off')
-    ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-    buf.seek(0)
-    plt.close(fig)
-
-    # 5️⃣ Send PNG and confirmation
-    async with httpx.AsyncClient(timeout=15) as client_req:
-        # Send sheet PNG
-        await client_req.post(
-            f"{BASE_URL}/sendPhoto",
-            files={"photo": ("site_down.png", buf, "image/png")},
-            data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
-        )
-        # Send confirmation message
-        await client_req.post(
-            f"{BASE_URL}/sendMessage",
-            json={"chat_id": chat_id, "text": "✅ Your message has been logged in Telegram sheet!"}
-        )
+        # Paste user message line by line
+        for line in text.split("\n"):
+            sheet.append_row([line])
 
     return {"ok": True}
