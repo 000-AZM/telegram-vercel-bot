@@ -4,44 +4,96 @@ import httpx
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+import pandas as pd
+import matplotlib.pyplot as plt
+from io import BytesIO
 
 app = FastAPI()
 
+# Telegram bot
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
+# Google Sheets setup
 SHEET_ID = os.getenv("SHEET_ID")
 SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CRED_JSON")
 
-scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(SERVICE_ACCOUNT_JSON), scope)
 client = gspread.authorize(creds)
 
+# Sheets
 telegram_sheet = client.open_by_key(SHEET_ID).worksheet("Telegram")
+site_down_sheet = client.open_by_key(SHEET_ID).worksheet("Site Down Hourly")
 
 @app.post("/api/bot")
-async def webhook(req: Request):
-    data = await req.json()
-    if "message" not in data:
-        return {"ok": True}
+async def telegram_webhook(req: Request):
+    try:
+        data = await req.json()
+        if "message" not in data:
+            return {"ok": True}
 
-    chat_id = data["message"]["chat"]["id"]
-    text = data["message"].get("text", "")
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
 
-    # Clear sheet
-    telegram_sheet.clear()
+        # 1️⃣ Clear Telegram sheet & append message line by line
+        try:
+            telegram_sheet.clear()
+            for line in text.split("\n"):
+                row = [part.strip() for part in line.split("│")]
+                telegram_sheet.append_row(row)
+        except Exception as e:
+            print("Error updating Telegram sheet:", e)
 
-    # Append user message line by line
-    for line in text.split("\n"):
-        telegram_sheet.append_row([line])
+        # 2️⃣ Generate Site Down Hourly PNG
+        try:
+            records = site_down_sheet.get_all_records()
+            df = pd.DataFrame(records)
+            if df.empty:
+                df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
 
-    # Send confirmation to Telegram
-    async with httpx.AsyncClient(timeout=15) as client_req:
-        resp = await client_req.post(
-            f"{BASE_URL}/sendMessage",
-            json={"chat_id": chat_id, "text": "✅ Message logged successfully!"}
-        )
-        # Log Telegram response for debugging
-        print("Telegram sendMessage response:", resp.status_code, resp.text)
+            # Limit rows to avoid timeout
+            max_rows = 30
+            if len(df) > max_rows:
+                df = df.head(max_rows)
 
+            fig, ax = plt.subplots(figsize=(8, max(len(df)*0.4, 2)))
+            ax.axis('off')
+            ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
+            buf = BytesIO()
+            plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+            buf.seek(0)
+            plt.close(fig)
+        except Exception as e:
+            print("Error generating PNG:", e)
+            buf = None
+
+        # 3️⃣ Send messages to Telegram
+        async with httpx.AsyncClient(timeout=15) as client_req:
+            # Send PNG if generated
+            if buf:
+                try:
+                    resp = await client_req.post(
+                        f"{BASE_URL}/sendPhoto",
+                        files={"photo": ("site_down.png", buf, "image/png")},
+                        data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
+                    )
+                    print("sendPhoto response:", resp.status_code, resp.text)
+                except Exception as e:
+                    print("Error sending PNG:", e)
+
+            # Send confirmation message
+            try:
+                resp = await client_req.post(
+                    f"{BASE_URL}/sendMessage",
+                    json={"chat_id": chat_id, "text": "✅ Your message has been logged in Telegram sheet!"}
+                )
+                print("sendMessage response:", resp.status_code, resp.text)
+            except Exception as e:
+                print("Error sending confirmation:", e)
+
+    except Exception as e:
+        print("Error in webhook:", e)
+
+    # Always return 200 OK to Telegram to prevent retries
     return {"ok": True}
