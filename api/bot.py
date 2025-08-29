@@ -35,40 +35,43 @@ async def telegram_webhook(req: Request):
     chat_id = data["message"]["chat"]["id"]
     text = data["message"].get("text", "")
 
-    # Clear Telegram sheet & paste user message line by line
+    # 1️⃣ Clear Telegram sheet
     telegram_sheet.clear()
-    for line in text.split("\n"):
-        telegram_sheet.append_row([line])
 
-    # Read Site Down Hourly sheet
+    # 2️⃣ Paste user message as normal (preserve columns)
+    for line in text.split("\n"):
+        # Split by some delimiter if you want columns; here we use "│" as in your example
+        row = [part.strip() for part in line.split("│")]
+        telegram_sheet.append_row(row)
+
+    # 3️⃣ Read Site Down Hourly sheet
     records = site_down_sheet.get_all_records()
     df = pd.DataFrame(records)
 
     if df.empty:
         df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
 
-    # Generate PNG table (optimized size)
-    fig, ax = plt.subplots(figsize=(8, max(len(df)*0.3, 2)))
+    # 4️⃣ Generate PNG table
+    fig, ax = plt.subplots(figsize=(8, max(len(df)*0.5, 2)))
     ax.axis('off')
     ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
     buf.seek(0)
-    plt.close(fig)  # free memory
+    plt.close(fig)
 
-    # Use a single async client for both requests
+    # 5️⃣ Send PNG and confirmation
     async with httpx.AsyncClient(timeout=15) as client_req:
-        # Send PNG to user
+        # Send sheet PNG
         await client_req.post(
             f"{BASE_URL}/sendPhoto",
             files={"photo": ("site_down.png", buf, "image/png")},
             data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
         )
-
         # Send confirmation message
         await client_req.post(
             f"{BASE_URL}/sendMessage",
-            json={"chat_id": chat_id, "text": "✅ Your message has been logged!"}
+            json={"chat_id": chat_id, "text": "✅ Your message has been logged in Telegram sheet!"}
         )
 
     return {"ok": True}
