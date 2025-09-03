@@ -1,37 +1,12 @@
 import os
 from fastapi import FastAPI, Request
 import httpx
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import json
-import pandas as pd
-import matplotlib
-matplotlib.use('Agg')  # Serverless-safe backend
-import matplotlib.pyplot as plt
-from io import BytesIO
-import tempfile
-
-# --- Matplotlib cache for Vercel ---
-tmpdir = tempfile.mkdtemp()
-matplotlib.rcParams['cache.directory'] = tmpdir
 
 app = FastAPI()
 
-# --- Telegram bot setup ---
+# Telegram token from Vercel environment
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
-
-# --- Google Sheets setup ---
-SHEET_ID = os.getenv("SHEET_ID")
-SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CRED_JSON")
-
-scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(SERVICE_ACCOUNT_JSON), scope)
-client = gspread.authorize(creds)
-
-# Worksheets
-telegram_sheet = client.open_by_key(SHEET_ID).worksheet("Telegram")
-site_down_sheet = client.open_by_key(SHEET_ID).worksheet("Site Down Hourly")
 
 @app.post("/api/bot")
 async def telegram_webhook(req: Request):
@@ -41,60 +16,13 @@ async def telegram_webhook(req: Request):
             return {"ok": True}
 
         chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
 
-        # --- 1️⃣ Send confirmation text immediately ---
-        async with httpx.AsyncClient() as client_req:
-            try:
-                await client_req.post(
-                    f"{BASE_URL}/sendMessage",
-                    json={"chat_id": chat_id, "text": "✅ Message received!"}
-                )
-            except Exception as e:
-                print("Error sending initial reply:", e)
-
-        # --- 2️⃣ Update Telegram sheet ---
-        try:
-            telegram_sheet.clear()
-            for line in text.split("\n"):
-                row = [part.strip() for part in line.split("│")] if "│" in line else [line]
-                telegram_sheet.append_row(row)
-        except Exception as e:
-            print("Error updating Telegram sheet:", e)
-
-        # --- 3️⃣ Generate Site Down Hourly PNG ---
-        buf = None
-        try:
-            records = site_down_sheet.get_all_records()
-            df = pd.DataFrame(records)
-            if df.empty:
-                df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
-
-            # Limit to 30 rows
-            df = df.head(30)
-
-            fig, ax = plt.subplots(figsize=(8, max(len(df)*0.4, 2)))
-            ax.axis('off')
-            ax.table(cellText=df.values, colLabels=df.columns, cellLoc='center', loc='center')
-
-            buf = BytesIO()
-            plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
-            buf.seek(0)
-            plt.close(fig)
-        except Exception as e:
-            print("PNG generation error:", e)
-
-        # --- 4️⃣ Send PNG if available ---
-        async with httpx.AsyncClient() as client_req:
-            if buf:
-                try:
-                    await client_req.post(
-                        f"{BASE_URL}/sendPhoto",
-                        files={"photo": ("site_down.png", buf, "image/png")},
-                        data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
-                    )
-                except Exception as e:
-                    print("Error sending PNG:", e)
+        # Send a simple text reply
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"{BASE_URL}/sendMessage",
+                json={"chat_id": chat_id, "text": "✅ Test reply received!"}
+            )
 
     except Exception as e:
         print("Webhook error:", e)
