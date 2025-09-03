@@ -15,18 +15,17 @@ import tempfile
 tmpdir = tempfile.mkdtemp()
 matplotlib.rcParams['cache.directory'] = tmpdir
 
-# Initialize FastAPI
 app = FastAPI()
 
 # Telegram bot
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-# Google Sheets setup
+# Google Sheets
 SHEET_ID = os.getenv("SHEET_ID")
 SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_CRED_JSON")
 
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+scope = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(SERVICE_ACCOUNT_JSON), scope)
 client = gspread.authorize(creds)
 
@@ -38,24 +37,22 @@ site_down_sheet = client.open_by_key(SHEET_ID).worksheet("Site Down Hourly")
 async def telegram_webhook(req: Request):
     try:
         data = await req.json()
-
         if "message" not in data:
             return {"ok": True}
 
         chat_id = data["message"]["chat"]["id"]
         text = data["message"].get("text", "")
 
-        # --- 1️⃣ Clear Telegram sheet and log user message ---
+        # --- 1️⃣ Update Telegram sheet ---
         try:
             telegram_sheet.clear()
             for line in text.split("\n"):
-                # Split by "│" to separate columns, or use the whole line if not found
                 row = [part.strip() for part in line.split("│")] if "│" in line else [line]
                 telegram_sheet.append_row(row)
         except Exception as e:
             print("Error updating Telegram sheet:", e)
 
-        # --- 2️⃣ Generate Site Down Hourly PNG ---
+        # --- 2️⃣ Generate PNG safely ---
         buf = None
         try:
             records = site_down_sheet.get_all_records()
@@ -63,8 +60,7 @@ async def telegram_webhook(req: Request):
             if df.empty:
                 df = pd.DataFrame([["No data"]], columns=["Site Down Hourly"])
 
-            # Limit to 30 rows to avoid timeout/memory issues
-            df = df.head(30)
+            df = df.head(30)  # limit rows
 
             fig, ax = plt.subplots(figsize=(8, max(len(df)*0.4, 2)))
             ax.axis('off')
@@ -77,31 +73,30 @@ async def telegram_webhook(req: Request):
         except Exception as e:
             print("PNG generation error:", e)
 
-        # --- 3️⃣ Send PNG and confirmation message ---
+        # --- 3️⃣ Send PNG and confirmation text ---
         async with httpx.AsyncClient(timeout=15) as client_req:
+            # Send PNG if available
             if buf:
                 try:
-                    resp = await client_req.post(
+                    await client_req.post(
                         f"{BASE_URL}/sendPhoto",
                         files={"photo": ("site_down.png", buf, "image/png")},
                         data={"chat_id": chat_id, "caption": "📊 Updated Site Down Hourly"}
                     )
-                    print("sendPhoto response:", resp.status_code, resp.text)
                 except Exception as e:
                     print("Error sending PNG:", e)
 
             # Always send text confirmation
             try:
-                resp = await client_req.post(
+                await client_req.post(
                     f"{BASE_URL}/sendMessage",
                     json={"chat_id": chat_id, "text": "✅ Your message has been logged in Telegram sheet!"}
                 )
-                print("sendMessage response:", resp.status_code, resp.text)
             except Exception as e:
                 print("Error sending confirmation:", e)
 
     except Exception as e:
         print("Webhook error:", e)
 
-    # Always return 200 OK to Telegram
+    # Always return 200 OK
     return {"ok": True}
