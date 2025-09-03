@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+httpx
+gspread
+oauth2client
+pandas
+matplotlib
